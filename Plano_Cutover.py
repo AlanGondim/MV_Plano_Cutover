@@ -4,7 +4,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 # Configuração da página
-st.set_page_config(page_title="Plano de Cutover Profissional", layout="wide")
+st.set_page_config(page_title="MV Plano de Cutover", layout="wide")
 
 # Função para calcular o cronograma baseado em predecessoras
 def calculate_schedule(df, project_start_date):
@@ -103,3 +103,4 @@ if btn_gerar:
 
 else:
     st.info("Preencha os dados acima e clique em 'Gerar' para visualizar o plano.")
+
