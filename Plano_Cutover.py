@@ -108,7 +108,7 @@ st.title("🚀 Plano de Cutover Hospitalar - MV")
 with st.sidebar:
     st.header("📋 Gestão do Projeto")
     nome_projeto = st.text_input("Nome do Projeto", value="Migração MV Hospitalar")
-    gerente_projeto = st.text_input("Gerente de Projetos", value="João Silva")
+    gerente_projeto = st.text_input("Gerente de Projetos", value="Digite seu nome")
     
     # Input de data no formato dd/mm/aaaa
     data_base = st.date_input("Data Inicial (dd/mm/aaaa)", datetime.now(), format="DD/MM/YYYY")
@@ -157,3 +157,4 @@ if btn_gerar:
     )
 else:
     st.info("Ajuste as informações na barra lateral e clique em 'Gerar' para visualizar o plano completo.")
+
