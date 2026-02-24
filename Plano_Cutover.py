@@ -10,39 +10,38 @@ st.set_page_config(page_title="Gestão de Cutover Integrado Prime", layout="wide
 
 # --- 1. BASE DE DADOS INTEGRAL (165 TAREFAS) ---
 if 'tasks_df' not in st.session_state:
-    # Estrutura baseada na volumetria solicitada
     tasks = []
     
-    # VERTICAL HOSPITALAR (60 Tarefas)
+    # VERTICAL HOSPITALAR (60 Tarefas) 
     for i in range(1, 61):
         tasks.append({
-            "ID": f"H{i}", "Vertical": "Hospitalar", "Responsabilidade": "MV" if i < 10 else "Cliente",
-            "Tarefa": f"Tarefa Hospitalar {i}: Processo de Cutover", "Predecessora": f"H{i-1}" if i > 1 else "0",
-            "Duração": 2 if i % 5 == 0 else 1, "Responsável": "Equipe Hospitalar", "Status": "Pendente"
+            "ID": f"H{i}", "Vertical": "Hospitalar", "Fase": "Go-Live",
+            "Tarefa": f"Atividade Hospitalar {i}: Execução e Validação", "Predecessora": f"H{i-1}" if i > 1 else "0",
+            "Duração": 1, "Responsável": "Equipe Assistencial", "Status": "Pendente", "Macro Processo": "Hospitalar"
         })
         
-    # VERTICAL FLOWTI (34 Tarefas)
+    # VERTICAL FLOWTI (34 Tarefas) 
     for i in range(1, 35):
         tasks.append({
-            "ID": f"F{i}", "Vertical": "FLOWTI", "Responsabilidade": "MV",
-            "Tarefa": f"Infraestrutura FLOWTI {i}: Configuração Técnica", "Predecessora": f"F{i-1}" if i > 1 else "H1",
-            "Duração": 1, "Responsável": "Equipe Infra", "Status": "Pendente"
+            "ID": f"F{i}", "Vertical": "FLOWTI", "Fase": "Infraestrutura",
+            "Tarefa": f"Infraestrutura FLOWTI {i}: Setup Técnico", "Predecessora": f"F{i-1}" if i > 1 else "H1",
+            "Duração": 1, "Responsável": "Equipe Infra", "Status": "Pendente", "Macro Processo": "FLOWTI"
         })
 
-    # VERTICAL MEDICINA DIAGNÓSTICA (39 Tarefas)
+    # VERTICAL MEDICINA DIAGNÓSTICA (39 Tarefas) 
     for i in range(1, 40):
         tasks.append({
-            "ID": f"D{i}", "Vertical": "Medicina Diagnóstica", "Responsabilidade": "Cliente",
-            "Tarefa": f"SADT/Diagnóstico {i}: Validação e Carga", "Predecessora": f"D{i-1}" if i > 1 else "H1",
-            "Duração": 1, "Responsável": "Equipe Médica", "Status": "Pendente"
+            "ID": f"D{i}", "Vertical": "Medicina Diagnóstica", "Fase": "Carga",
+            "Tarefa": f"SADT {i}: Validação e Carga de Dados", "Predecessora": f"D{i-1}" if i > 1 else "H1",
+            "Duração": 1, "Responsável": "Equipe Diagnóstica", "Status": "Pendente", "Macro Processo": "Medicina Diagnóstica"
         })
 
-    # VERTICAL PLANO DE SAÚDE (32 Tarefas)
+    # VERTICAL PLANO DE SAÚDE (32 Tarefas) 
     for i in range(1, 33):
         tasks.append({
-            "ID": f"P{i}", "Vertical": "Plano de Saúde", "Responsabilidade": "MV",
-            "Tarefa": f"Operadora {i}: Carga de Beneficiários e Regras", "Predecessora": f"P{i-1}" if i > 1 else "H1",
-            "Duração": 2, "Responsável": "Equipe Operadora", "Status": "Pendente"
+            "ID": f"P{i}", "Vertical": "Plano de Saúde", "Fase": "Carga",
+            "Tarefa": f"Operadora {i}: Regras e Beneficiários", "Predecessora": f"P{i-1}" if i > 1 else "H1",
+            "Duração": 1, "Responsável": "Equipe Operadora", "Status": "Pendente", "Macro Processo": "Plano de Saúde"
         })
 
     st.session_state.tasks_df = pd.DataFrame(tasks)
@@ -69,28 +68,28 @@ def calculate_schedule(df, start_date, tolerance):
         end_dates[t_id] = current_end
     return df
 
-# --- 3. INTERFACE ---
-st.title("🚀 Dashboard de Cutover Integrado Prime (165 Atividades)")
+# --- 3. INTERFACE E DASHBOARD ---
+st.title("🚀 Painel Cutover Integrado Prime (165 Atividades)")
 
 with st.sidebar:
-    st.header("⚙️ Gestão do Programa")
-    verticais_ativadas = st.multiselect("Selecione as Verticais do Escopo", 
+    st.header("⚙️ Gestão Estratégica")
+    verticais_ativadas = st.multiselect("Selecionar Verticais do Escopo", 
                                         ["Hospitalar", "FLOWTI", "Medicina Diagnóstica", "Plano de Saúde"],
                                         default=["Hospitalar", "FLOWTI", "Medicina Diagnóstica", "Plano de Saúde"])
     
-    dt_inicio = st.date_input("Data de Início do Programa", datetime.now())
-    desvio = st.number_input("Tolerância de Segurança (Dias)", min_value=0, value=3)
+    dt_inicio = st.date_input("Início do Programa", datetime.now())
+    desvio = st.number_input("Tolerância (Dias)", min_value=0, value=3)
 
     st.divider()
-    st.subheader("🛠️ Editar Atividade Selecionada")
-    sel_id = st.selectbox("Selecione o ID para edição", st.session_state.tasks_df['ID'].unique())
+    st.subheader("🛠️ Editar Atividade")
+    sel_id = st.selectbox("ID para edição", st.session_state.tasks_df['ID'].unique())
     idx = st.session_state.tasks_df[st.session_state.tasks_df['ID'] == sel_id].index[0]
     
-    with st.expander("Campos de Edição"):
+    with st.expander("Modificar Atributos"):
         new_dur = st.number_input("Duração", value=int(st.session_state.tasks_df.at[idx, 'Duração']))
         new_stat = st.selectbox("Status", ["Pendente", "Em Andamento", "Concluído"], 
                                 index=["Pendente", "Em Andamento", "Concluído"].index(st.session_state.tasks_df.at[idx, 'Status']))
-        new_pred = st.text_input("Predecessora", value=st.session_state.tasks_df.at[idx, 'Predecessora'])
+        new_pred = st.text_input("Predecessora ID", value=st.session_state.tasks_df.at[idx, 'Predecessora'])
         
         if st.button("💾 Salvar Alterações"):
             st.session_state.tasks_df.at[idx, 'Duração'] = new_dur
@@ -98,15 +97,23 @@ with st.sidebar:
             st.session_state.tasks_df.at[idx, 'Predecessora'] = new_pred
             st.rerun()
 
-# --- 4. DASHBOARD E GRÁFICOS ---
+# --- 4. INDICADORES (%) ---
 df_calc = calculate_schedule(st.session_state.tasks_df, datetime.combine(dt_inicio, datetime.min.time()), desvio)
 df_final = df_calc[df_calc['Vertical'].isin(verticais_ativadas)]
 
-tab1, tab2, tab3 = st.tabs(["📋 Planilha Geral", "📅 Gráfico de GANTT", "🕸️ Diagrama PERT"])
+st.subheader("📈 Progresso por Vertical")
+cols = st.columns(len(verticais_ativadas))
+for i, v in enumerate(verticais_ativadas):
+    v_tasks = df_final[df_final['Vertical'] == v]
+    total = len(v_tasks)
+    concluidas = len(v_tasks[v_tasks['Status'] == 'Concluído'])
+    perc = (concluidas / total * 100) if total > 0 else 0
+    cols[i].metric(v, f"{perc:.1f}%", f"{concluidas}/{total} tarefas")
+
+# --- 5. VISUALIZAÇÕES ---
+tab1, tab2, tab3 = st.tabs(["📋 Planilha Executiva", "📅 Gráfico de GANTT", "🕸️ Diagrama PERT"])
 
 with tab1:
-    st.subheader("Controle Executivo de Tarefas")
-    # Formatação para exibição
     df_disp = df_final.copy()
     for c in ['Data Início', 'Data Término', 'Data Limite']: df_disp[c] = df_disp[c].dt.strftime('%d/%m/%Y')
     st.dataframe(df_disp, use_container_width=True, hide_index=True)
@@ -115,20 +122,22 @@ with tab1:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df_disp.to_excel(writer, index=False, sheet_name='Cronograma_Cutover')
-    st.download_button("📥 Baixar Cronograma em Excel", data=buffer.getvalue(), file_name="Plano_Integrado_Prime.xlsx")
+    st.download_button("📥 Baixar Excel", data=buffer.getvalue(), file_name="Plano_Integrado_Prime.xlsx")
 
 with tab2:
-    st.subheader("Caminho Crítico do Programa")
-        fig = px.timeline(df_final, x_start="Data Início", x_end="Data Término", y="Tarefa", color="Vertical",
-                      hover_data=["ID", "Responsável", "Data Limite"])
+    
+    fig = px.timeline(df_final, x_start="Data Início", x_end="Data Término", y="Tarefa", color="Vertical",
+                      hover_data=["ID", "Responsável", "Status", "Data Limite"])
     fig.update_yaxes(autorange="reversed")
     st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
-    st.subheader("Rede de Dependências Integrada")
-        dot = Digraph(comment='PERT', graph_attr={'rankdir':'LR', 'size': '10,10'})
-    # Amostra das primeiras 20 para não sobrecarregar visualmente
+    
+    dot = Digraph(comment='PERT', graph_attr={'rankdir':'LR', 'size': '12,12'})
+    # Amostra para visualização clara
     for _, row in df_final.head(30).iterrows():
-        dot.node(row['ID'], f"{row['ID']}\n{row['Tarefa'][:20]}...")
-        if row['Predecessora'] != '0': dot.edge(row['Predecessora'], row['ID'])
+        color = 'green' if row['Status'] == 'Concluído' else 'orange' if row['Status'] == 'Em Andamento' else 'black'
+        dot.node(row['ID'], f"{row['ID']}\n{row['Tarefa'][:20]}...", color=color)
+        if row['Predecessora'] != '0' and row['Predecessora'] in df_final['ID'].values:
+            dot.edge(row['Predecessora'], row['ID'])
     st.graphviz_chart(dot)
