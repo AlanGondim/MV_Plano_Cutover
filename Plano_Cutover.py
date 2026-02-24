@@ -7,22 +7,21 @@ import io
 # Configuração da página para visualização executiva
 st.set_page_config(page_title="Dashboard Cutover Prime MV", layout="wide")
 
-# --- CARGA DA BASE COMPLETA (152 TAREFAS - AMOSTRA ESTRUTURADA) ---
+# --- 1. DEFINIÇÃO DA BASE DE DADOS (DADOS DAS FONTES) ---
 if 'tasks_df' not in st.session_state:
-    # Nota: Em um cenário real, este dicionário conteria os 152 itens do PDF. 
-    # Abaixo, a estrutura pronta para receber os dados integrais.
+    # Aqui devem ser inseridas as 152 tarefas extraídas do PDF
     base_data = [
-        {"ID": "1", "Vertical": "Hospitalar", "Fase": "Planejamento", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Tarefa": "Verificar todas as verticais envolvidas no projeto", "Predecessora": "0", "Duração Prevista": 0, "Status": "Concluído"},
-        {"ID": "2", "Vertical": "Hospitalar", "Fase": "Planejamento", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Tarefa": "Verificar se o cliente possui triggers, procedanse functions próprias", "Predecessora": "1", "Duração Prevista": 2, "Status": "Concluído"},
-        {"ID": "18", "Vertical": "Hospitalar", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Tarefa": "Migrar (Exportar/Importar) todos os relatórios para o Report Designer", "Predecessora": "17", "Duração Prevista": 45, "Status": "Pendente"},
-        {"ID": "D1", "Vertical": "Medicina Diagnóstica", "Fase": "Carga", "Macro Processo": "SADT", "Responsabilidade": "Cliente", "Tarefa": "Ajustar agendas de diagnóstico por imagem", "Predecessora": "1", "Duração Prevista": 15, "Status": "Pendente"},
-        {"ID": "F1", "Vertical": "FLOWTI", "Fase": "Infraestrutura", "Macro Processo": "TI", "Responsabilidade": "MV", "Tarefa": "Configuração de Servidores e Banco de Dados", "Predecessora": "0", "Duração Prevista": 10, "Status": "Em andamento"},
-        {"ID": "P1", "Vertical": "Plano de Saúde", "Fase": "Carga", "Macro Processo": "Financeiro", "Responsabilidade": "Cliente", "Tarefa": "Carga de dados de beneficiários e planos", "Predecessora": "0", "Duração Prevista": 7, "Status": "Pendente"},
+        {"ID": "1", "Vertical": "Hospitalar", "Fase": "Planejamento", "Macro Processo": "TI", "Responsabilidade": "MV", "Responsável": "Equipe MV", "Tarefa": "Verificar todas as verticais envolvidas no projeto", "Predecessora": "0", "Duração Prevista": 0, "Status": "Concluído"},
+        {"ID": "2", "Vertical": "Hospitalar", "Fase": "Planejamento", "Macro Processo": "TI", "Responsabilidade": "MV", "Responsável": "DBA MV", "Tarefa": "Verificar se o cliente possui triggers, procedanse functions próprias", "Predecessora": "1", "Duração Prevista": 2, "Status": "Concluído"},
+        {"ID": "3", "Vertical": "Hospitalar", "Fase": "Pré Go Live", "Macro Processo": "TI", "Responsabilidade": "Cliente", "Responsável": "TI Local", "Tarefa": "Atualizar a versão do sistema", "Predecessora": "2", "Duração Prevista": 2, "Status": "Em andamento"},
+        # ... Adicione as outras 149 tarefas aqui seguindo este padrão
+        {"ID": "D1", "Vertical": "Medicina Diagnóstica", "Fase": "Carga", "Macro Processo": "SADT", "Responsabilidade": "Cliente", "Responsável": "Radiologia", "Tarefa": "Ajustar agendas de diagnóstico por imagem", "Predecessora": "1", "Duração Prevista": 15, "Status": "Pendente"},
+        {"ID": "F1", "Vertical": "FLOWTI", "Fase": "Infra", "Macro Processo": "TI", "Responsabilidade": "MV", "Responsável": "Infra", "Tarefa": "Configuração de Servidores", "Predecessora": "0", "Duração Prevista": 10, "Status": "Pendente"},
+        {"ID": "P1", "Vertical": "Plano de Saúde", "Fase": "Carga", "Macro Processo": "Financeiro", "Responsabilidade": "Cliente", "Responsável": "Financeiro", "Tarefa": "Carga de dados de beneficiários", "Predecessora": "0", "Duração Prevista": 7, "Status": "Pendente"},
     ]
-    # Aqui o Gerente deve completar até o ID 152 conforme o documento anexo 
     st.session_state.tasks_df = pd.DataFrame(base_data)
 
-# --- MOTOR DE CÁLCULO DE CRONOGRAMA ---
+# --- 2. MOTOR DE CÁLCULO (Caminho Crítico) ---
 def calculate_schedule(df, project_start_date, tolerance_days):
     df = df.copy()
     df['Duração Prevista'] = pd.to_numeric(df['Duração Prevista'], errors='coerce').fillna(0)
@@ -31,7 +30,6 @@ def calculate_schedule(df, project_start_date, tolerance_days):
     df['Data Limite'] = pd.NaT
     
     end_dates = {}
-    # Ordenação lógica para garantir que predecessoras venham antes
     df = df.sort_values(by=['ID']) 
 
     for index, row in df.iterrows():
@@ -54,73 +52,82 @@ def calculate_schedule(df, project_start_date, tolerance_days):
         
     return df
 
-# --- INTERFACE EXECUTIVA ---
+# --- 3. INTERFACE E FILTROS (Correção do NameError) ---
 st.title("📊 Painel Cutover Prime MV - Gestão Integrada")
 
 with st.sidebar:
-    st.header("🏢 Filtro de Verticais")
-    verticais = ["Hospitalar", "Medicina Diagnóstica", "FLOWTI", "Plano de Saúde"]
-    v_selected = st.multiselect("Selecione o Escopo do Programa", verticais, default=["Hospitalar"]) [cite: 1, 2]
+    st.header("🏢 Configuração do Escopo")
+    
+    # DEFINIÇÃO DA VARIÁVEL ANTES DO USO (Evita o NameError)
+    opcoes_verticais = ["Hospitalar", "Medicina Diagnóstica", "FLOWTI", "Plano de Saúde"]
+    
+    v_selected = st.multiselect(
+        "Selecione as Verticais do Programa", 
+        options=opcoes_verticais, 
+        default=["Hospitalar"]
+    )
     
     st.divider()
-    st.header("🛠️ Gestão de Tarefas (CRUD)")
+    st.header("🛠️ Edição e CRUD")
     
-    with st.expander("📝 Editar ou Excluir"):
-        id_to_edit = st.selectbox("Selecione o ID da Tarefa", st.session_state.tasks_df['ID'].unique())
-        idx = st.session_state.tasks_df[st.session_state.tasks_df['ID'] == id_to_edit].index[0]
+    # Seção para Editar tarefas existentes
+    with st.expander("📝 Editar Tarefa Selecionada"):
+        id_edit = st.selectbox("ID da Tarefa", st.session_state.tasks_df['ID'].unique())
+        idx = st.session_state.tasks_df[st.session_state.tasks_df['ID'] == id_edit].index[0]
         
-        edit_dur = st.number_input("Nova Duração (Dias)", value=int(st.session_state.tasks_df.at[idx, 'Duração Prevista']))
-        edit_pred = st.text_input("Nova Predecessora", value=str(st.session_state.tasks_df.at[idx, 'Predecessora']))
-        edit_status = st.selectbox("Status", ["Pendente", "Em andamento", "Concluído"], 
+        new_dur = st.number_input("Duração (Dias)", value=int(st.session_state.tasks_df.at[idx, 'Duração Prevista']))
+        new_pred = st.text_input("Predecessora", value=str(st.session_state.tasks_df.at[idx, 'Predecessora']))
+        new_status = st.selectbox("Status", ["Pendente", "Em andamento", "Concluído"], 
                                    index=["Pendente", "Em andamento", "Concluído"].index(st.session_state.tasks_df.at[idx, 'Status']))
         
-        col_btn1, col_btn2 = st.columns(2)
-        if col_btn1.button("Salvar Alterações"):
-            st.session_state.tasks_df.at[idx, 'Duração Prevista'] = edit_dur
-            st.session_state.tasks_df.at[idx, 'Predecessora'] = edit_pred
-            st.session_state.tasks_df.at[idx, 'Status'] = edit_status
-            st.rerun()
-            
-        if col_btn2.button("Excluir Tarefa"):
-            st.session_state.tasks_df = st.session_state.tasks_df.drop(idx).reset_index(drop=True)
+        if st.button("Salvar Alterações"):
+            st.session_state.tasks_df.at[idx, 'Duração Prevista'] = new_dur
+            st.session_state.tasks_df.at[idx, 'Predecessora'] = new_pred
+            st.session_state.tasks_df.at[idx, 'Status'] = new_status
             st.rerun()
 
     st.divider()
-    st.header("📅 Parâmetros Globais")
-    data_base = st.date_input("Data de Início do Cutover", datetime.now())
-    tolerancia = st.number_input("Tolerância (Dias de Desvio)", min_value=0, value=3)
+    data_base = st.date_input("Início do Cutover", datetime.now())
+    tolerancia = st.number_input("Tolerância (Dias)", min_value=0, value=3)
 
-# --- PROCESSAMENTO ---
+# --- 4. PROCESSAMENTO E VISUALIZAÇÃO ---
 df_calc = calculate_schedule(st.session_state.tasks_df, datetime.combine(data_base, datetime.min.time()), tolerancia)
 df_final = df_calc[df_calc['Vertical'].isin(v_selected)]
 
-# --- DASHBOARD VISUAL ---
+
+
 if not df_final.empty:
-    # Gráfico de Gantt Integrado
-    st.subheader(f"🖼️ Cronograma Integrado: {', '.join(v_selected)}")
-    fig = px.timeline(df_final, x_start="Data Início", x_end="Data Fim", y="Tarefa", color="Vertical",
-                      hover_data=["ID", "Predecessora", "Status", "Data Limite"],
-                      color_discrete_map={"Hospitalar": "#004a88", "Medicina Diagnóstica": "#00a1ab", "FLOWTI": "#f39200", "Plano de Saúde": "#e30613"})
+    st.subheader(f"🖼️ Cronograma Integrado - {len(df_final)} Tarefas")
+    
+    fig = px.timeline(
+        df_final, 
+        x_start="Data Início", 
+        x_end="Data Fim", 
+        y="Tarefa", 
+        color="Vertical",
+        hover_data=["ID", "Predecessora", "Status"],
+        color_discrete_map={
+            "Hospitalar": "#004a88", 
+            "Medicina Diagnóstica": "#00a1ab", 
+            "FLOWTI": "#f39200", 
+            "Plano de Saúde": "#e30613"
+        }
+    )
     fig.update_yaxes(autorange="reversed")
     fig.update_xaxes(tickformat="%d/%m/%Y")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Tabela Executiva
-    st.subheader("📑 Tabela de Atividades Detalhada")
+    # Exportação para Excel
     df_view = df_final.copy()
     for col in ['Data Início', 'Data Fim', 'Data Limite']:
         df_view[col] = df_view[col].dt.strftime('%d/%m/%Y')
     
-    st.dataframe(df_view.drop(columns=['Vertical']) if len(v_selected)==1 else df_view, 
-                 use_container_width=True, hide_index=True)
+    st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-    # Exportação Prime
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df_view.to_excel(writer, index=False, sheet_name='Plano_Cutover_Integrado')
+        df_view.to_excel(writer, index=False, sheet_name='Plano_Cutover')
     
-    st.download_button("📥 Baixar Plano Integrado Prime (Excel)", 
-                       data=buffer.getvalue(), 
-                       file_name=f"Cutover_Integrado_{datetime.now().strftime('%d%m%Y')}.xlsx")
+    st.download_button("📥 Baixar Plano Integrado (Excel)", data=buffer.getvalue(), file_name="Plano_Cutover_Integrado.xlsx")
 else:
-    st.warning("Selecione verticais na barra lateral para carregar o plano.")
+    st.warning("Selecione ao menos uma vertical na barra lateral.")
