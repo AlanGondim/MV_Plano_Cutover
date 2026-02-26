@@ -1,207 +1,230 @@
-import streamlit as st
 import pandas as pd
-import plotly.express as px
-from datetime import datetime, timedelta
+import streamlit as st
+import matplotlib.pyplot as plt
+import numpy as np
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, inspect
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from fpdf import FPDF
+from datetime import datetime
 import io
-# CORREÇÃO: Nome correto da biblioteca
-from streamlit_gsheets import GSheetsConnection
+import os
 
-# Configuração da página
-st.set_page_config(page_title="Painel Cutover Hospitalar MV", layout="wide", page_icon="🚀")
+# --- DATABASE SETUP ---
+Base = declarative_base()
+DB_NAME = 'sqlite:///hub_inteligencia_executivo.db'
+engine = create_engine(DB_NAME)
+Session = sessionmaker(bind=engine)
+session = Session()
 
-# CONEXÃO GOOGLE SHEETS 
-# Certifique-se de ter configurado as secrets no Streamlit Cloud ou .streamlit/secrets.toml
-conn = st.connection("gsheets", type=GSheetsConnection)
+class Projeto(Base):
+    __tablename__ = 'monitoramento_projetos'
+    id = Column(Integer, primary_key=True)
+    nome_projeto = Column(String)
+    gerente_projeto = Column(String)
+    oportunidade = Column(String)
+    horas_contratadas = Column(Float)
+    tipo = Column(String)
+    data_inicio = Column(String)
+    data_termino = Column(String)
+    data_producao = Column(String)
+    responsavel_verificacao = Column(String)
+    timestamp = Column(DateTime, default=datetime.now)
+    inicializacao = Column(Float); planejamento = Column(Float)
+    workshop_de_processos = Column(Float); construcao = Column(Float)
+    go_live = Column(Float); operacao_assistida = Column(Float)
+    finalizacao = Column(Float)
 
-def calculate_schedule(df, project_start_date, tolerance_days):
-    df = df.copy()
-    # Garantir que os tipos de dados estão corretos para cálculos
-    df['Duração Prevista'] = pd.to_numeric(df['Duração Prevista'], errors='coerce').fillna(0)
-    df['ID'] = df['ID'].astype(str).str.strip()
-    df['Predecessora'] = df['Predecessora'].astype(str).str.strip()
+# Garante que as colunas existam
+Base.metadata.create_all(engine)
+
+# --- METODOLOGIA ---
+METODOLOGIA = {
+    "Inicialização": ["Proposta Técnica", "Contrato assinado", "Orçamento Inicial", "Alinhamento time MV", "Ata de reunião", "Alinhamento Cliente", "TAP", "DEP"],
+    "Planejamento": ["Evidência de Kick Off", "Ata de Reunião", "Cronograma", "Plano de Projeto"],
+    "Workshop de Processos": ["Análise de Gaps Críticos", "Business Blue Print", "Configuração do Sistema", "Apresentação da Solução", "Termo de Aceite"],
+    "Construção": ["Plano de Cutover", "Avaliação de Treinamento", "Lista de Presença", "Treinamento de Tabelas", "Carga Precursora", "Homologação Integração"],
+    "Go Live": ["Carga Final de Dados", "Escala Apoio Go Live", "Metas de Simulação", "Testes Integrados", "Reunição Go/No Go", "Ata de Reunião"],
+    "Operação Assistida": ["Suporte In Loco", "Pré-Onboarding", "Ata de Reunião", "Identificação de Gaps", "Termo de Aceite"],
+    "Finalização": ["Reunião de Finalização", "Ata de Reunião", "TEP", "Lições Aprendidas"]
+}
+
+MAPA_COLUNAS = {
+    "Inicialização": "inicializacao", "Planejamento": "planejamento", 
+    "Workshop de Processos": "workshop_de_processos", "Construção": "construcao",
+    "Go Live": "go_live", "Operação Assistida": "operacao_assistida", "Finalização": "finalizacao"
+}
+
+# --- FUNÇÕES AUXILIARES ---
+def gerar_radar_chart(realizado_dict):
+    categorias = list(realizado_dict.keys())
+    valores = list(realizado_dict.values())
+    N = len(categorias)
+    angulos = [n / float(N) * 2 * np.pi for n in range(N)]
+    angulos += angulos[:1]
+    realizado = valores + valores[:1]
     
-    df['Data Início'] = pd.NaT
-    df['Data Fim'] = pd.NaT
-    df['Data Limite'] = pd.NaT
-    
-    end_dates = {}
-    
-    # Ordenar por ID para garantir a integridade das predecessoras
-    df['ID_Int'] = pd.to_numeric(df['ID'], errors='coerce')
-    df = df.sort_values('ID_Int').drop(columns=['ID_Int'])
+    fig, ax = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+    ax.plot(angulos, [100.0]*(N+1), color='#143264', linewidth=1, linestyle='--')
+    ax.plot(angulos, realizado, color='#ffb30e', linewidth=3, label="Realizado")
+    ax.fill(angulos, realizado, color='#ffb30e', alpha=0.3)
+    plt.xticks(angulos[:-1], categorias, size=7, fontweight='bold')
+    return fig
 
-    for index, row in df.iterrows():
-        task_id = row['ID']
-        pred_id = row['Predecessora']
-        duration = int(row['Duração Prevista'])
-        
-        # Lógica de início: primeira tarefa ou predecessora inexistente
-        if pred_id in ['0', '', 'None', 'nan'] or pred_id not in end_dates:
-            current_start = project_start_date
-        else:
-            current_start = end_dates[pred_id]
-        
-        current_end = current_start + timedelta(days=duration)
-        limit_date = current_end + timedelta(days=tolerance_days)
-        
-        df.at[index, 'Data Início'] = current_start
-        df.at[index, 'Data Fim'] = current_end
-        df.at[index, 'Data Limite'] = limit_date
-        end_dates[task_id] = current_end
-        
-    return df
+class PDFExecutivo(FPDF):
+    def header(self):
+        self.set_fill_color(20, 50, 100)
+        self.rect(0, 0, 210, 40, 'F')
+        if os.path.exists("Logomarca MV Atualizada.png"):
+            self.image("Logomarca MV Atualizada.png", x=10, y=8, w=22)
+        self.set_font('Helvetica', 'B', 16); self.set_text_color(255, 255, 255)
+        self.set_xy(35, 15)
+        self.cell(140, 10, "STATUS REPORT EXECUTIVO - HUB DE INTELIGENCIA", ln=True, align='C')
+        self.ln(20)
 
-# --- CARREGAMENTO DE DADOS (GSHEETS + FALLBACK) ---
-@st.cache_data(ttl=60)  # Cache de 1 minuto para performance
-def load_data():
-    try:
-        # Tenta ler da planilha configurada
-        return conn.read(ttl="0")
-    except Exception:
-        # Se falhar, usa seus dados originais do código
-        return pd.DataFrame([
-    {"ID": "1", "Fase": "Planejamento", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "Consultoria", "Tarefa": "Verificar todas as verticais envolvidas no projeto", "Predecessora": "0", "Duração Prevista": 0, "Status": "Concluído"},
-    {"ID": "2", "Fase": "Planejamento", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "TI", "Tarefa": "Verificar se o cliente possui triggers, procedures e functions próprias", "Predecessora": "1", "Duração Prevista": 2, "Status": "Concluído"},
-    {"ID": "3", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Atualizar a versão do sistema", "Predecessora": "2", "Duração Prevista": 2, "Status": "Em andamento"},
-    {"ID": "4", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Atualizar a base de CEP", "Predecessora": "3", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "5", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Validar todas as integrações", "Predecessora": "4", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "6", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Validar funcionalidades e configurações multiempresa", "Predecessora": "5", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "7", "Fase": "Pré Go Live", "Macro Processo": "Faturamento", "Responsabilidade": "Cliente", "Responsável": "Faturamento", "Tarefa": "Validar processo automático de autorização hospitalar e convênios", "Predecessora": "6", "Duração Prevista": 6, "Status": "Pendente"},
-    {"ID": "8", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Instalar e validar os gerenciadores de impressão (GIM)", "Predecessora": "7", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "9", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Instalar máquinas na rede", "Predecessora": "8", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "10", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Instalar os LAS em todas as máquinas", "Predecessora": "9", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "11", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Instalar o Cent Browser em todas as máquinas", "Predecessora": "10", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "12", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Preparar ferramenta de acesso remoto às máquinas dos setores", "Predecessora": "11", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "13", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "TI", "Tarefa": "Revisar tickets impeditivos e não impeditivos", "Predecessora": "12", "Duração Prevista": 0, "Status": "Pendente"},
-    {"ID": "14", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Divulgar a lista de login dos usuários para os setores", "Predecessora": "13", "Duração Prevista": 1, "Status": "Pendente"},
-    {"ID": "15", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Validar todos os vínculos/usuários vinculados", "Predecessora": "14", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "16", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Verificar a relação Usuários Prestador (Versão HTML5)", "Predecessora": "15", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "17", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Testar impressões de fichas de atendimento e guias SADT", "Predecessora": "16", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "18", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Migrar relatórios para o Report Designer e ajustar parâmetros", "Predecessora": "17", "Duração Prevista": 45, "Status": "Pendente"},
-    {"ID": "19", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Testar impressão dos documentos de prontuário", "Predecessora": "18", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "20", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Testar etiquetas de todos os setores", "Predecessora": "19", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "21", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Testar leitores de códigos de barras de todos os setores", "Predecessora": "20", "Duração Prevista": 6, "Status": "Pendente"},
-    {"ID": "22", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Vincular usuários por unidade de internação (HTML5)", "Predecessora": "21", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "23", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Vincular Usuário x Prestador para PEP", "Predecessora": "22", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "24", "Fase": "Pré Go Live", "Macro Processo": "Atendimento", "Responsabilidade": "Cliente", "Responsável": "Atendimento", "Tarefa": "Ajustar escalas de Agendamento (SCMA) no HTML5", "Predecessora": "23", "Duração Prevista": 30, "Status": "Pendente"},
-    {"ID": "25", "Fase": "Pré Go Live", "Macro Processo": "Atendimento", "Responsabilidade": "Cliente", "Responsável": "Atendimento", "Tarefa": "Realizar levantamento de internações no sistema atual", "Predecessora": "24", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "26", "Fase": "Pré Go Live", "Macro Processo": "Atendimento", "Responsabilidade": "Cliente", "Responsável": "Atendimento", "Tarefa": "Realizar levantamento de agendamentos cirúrgicos no sistema atual", "Predecessora": "25", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "27", "Fase": "Carga", "Macro Processo": "Atendimento", "Responsabilidade": "Cliente", "Responsável": "Atendimento", "Tarefa": "Realizar agendamentos ambulatoriais", "Predecessora": "26", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "28", "Fase": "Carga", "Macro Processo": "Atendimento", "Responsabilidade": "Cliente", "Responsável": "Atendimento", "Tarefa": "Realizar agendamentos cirúrgicos", "Predecessora": "27", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "29", "Fase": "Carga", "Macro Processo": "SADT", "Responsabilidade": "Cliente", "Responsável": "SADT", "Tarefa": "Realizar agendamentos de exames", "Predecessora": "28", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "30", "Fase": "Carga", "Macro Processo": "SADT", "Responsabilidade": "Cliente", "Responsável": "SADT", "Tarefa": "Ajustar agendas de diagnóstico por imagem", "Predecessora": "29", "Duração Prevista": 15, "Status": "Pendente"},
-    {"ID": "31", "Fase": "Carga", "Macro Processo": "Atendimento", "Responsabilidade": "Cliente", "Responsável": "Atendimento", "Tarefa": "Realizar internação dos pacientes", "Predecessora": "30", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "32", "Fase": "Carga", "Macro Processo": "Controladoria", "Responsabilidade": "Cliente", "Responsável": "Controladoria", "Tarefa": "Realizar carga de dados financeiros (CP, CR e saldos)", "Predecessora": "31", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "33", "Fase": "Carga", "Macro Processo": "Controladoria", "Responsabilidade": "Cliente", "Responsável": "Controladoria", "Tarefa": "Realizar carga de dados contábeis (saldos)", "Predecessora": "32", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "34", "Fase": "Pré Go Live", "Macro Processo": "Controladoria", "Responsabilidade": "Cliente", "Responsável": "Controladoria", "Tarefa": "Alterar o processo do Custo Médio Diário para Custo Médio Mensal", "Predecessora": "33", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "35", "Fase": "Pré Go Live", "Macro Processo": "Controladoria", "Responsabilidade": "Cliente", "Responsável": "Controladoria", "Tarefa": "Definir Cartão de Crédito e Débito na tela de Administradora", "Predecessora": "34", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "36", "Fase": "Pré Go Live", "Macro Processo": "Controladoria", "Responsabilidade": "Cliente", "Responsável": "Controladoria", "Tarefa": "Ajustar processos de Caixa/Tesouraria (unificados)", "Predecessora": "35", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "37", "Fase": "Pré Go Live", "Macro Processo": "Suprimentos", "Responsabilidade": "Cliente", "Responsável": "Suprimentos", "Tarefa": "Orientar que produtos excedentes nos andares sejam devolvidos", "Predecessora": "36", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "38", "Fase": "Pré Go Live", "Macro Processo": "Suprimentos", "Responsabilidade": "Cliente", "Responsável": "Suprimentos", "Tarefa": "Etiquetar todos os produtos com etiquetas emitidas pelo MV", "Predecessora": "37", "Duração Prevista": 10, "Status": "Pendente"},
-    {"ID": "39", "Fase": "Carga", "Macro Processo": "Suprimentos", "Responsabilidade": "Cliente", "Responsável": "Suprimentos", "Tarefa": "Realizar Inventário", "Predecessora": "38", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "40", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Divulgar agenda de alocação dos multiplicadores por setor", "Predecessora": "39", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "41", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "TI", "Tarefa": "Divulgar agenda de alocação do time de migração", "Predecessora": "40", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "42", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Outros", "Responsável": "TI", "Tarefa": "Divulgar agenda de alocação da consultoria por setores", "Predecessora": "41", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "43", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Validar os logins e perfis de acesso na simulação", "Predecessora": "42", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "44", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Criar paciente fictício para validação do ambiente de Produção", "Predecessora": "43", "Duração Prevista": 1, "Status": "Pendente"},
-    {"ID": "45", "Fase": "Planejamento", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "TI", "Tarefa": "Verificar o número de estações contratadas e comparar com a real", "Predecessora": "44", "Duração Prevista": 0, "Status": "Pendente"},
-    {"ID": "46", "Fase": "Simulação", "Macro Processo": "Atendimento", "Responsabilidade": "Cliente", "Responsável": "Atendimento", "Tarefa": "Testar abertura de atendimentos", "Predecessora": "45", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "47", "Fase": "Simulação", "Macro Processo": "Assistencial", "Responsabilidade": "Cliente", "Responsável": "Assistencial", "Tarefa": "Testar o fluxo assistencial (atendimento, evolução, prescrição)", "Predecessora": "46", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "48", "Fase": "Simulação", "Macro Processo": "Assistencial", "Responsabilidade": "Cliente", "Responsável": "Assistencial", "Tarefa": "Verificar telas descontinuadas da PEP e ajustar", "Predecessora": "47", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "49", "Fase": "Simulação", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Executar scripts de ajuste de frequências (SELECT insert into)", "Predecessora": "48", "Duração Prevista": 1, "Status": "Pendente"},
-    {"ID": "50", "Fase": "Simulação", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Refazer os documentos em OCX no Editor", "Predecessora": "49", "Duração Prevista": 45, "Status": "Pendente"},
-    {"ID": "51", "Fase": "Simulação", "Macro Processo": "SADT", "Responsabilidade": "Cliente", "Responsável": "SADT", "Tarefa": "Testar solicitação de exames e conferência", "Predecessora": "50", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "52", "Fase": "Simulação", "Macro Processo": "Suprimentos", "Responsabilidade": "Cliente", "Responsável": "Suprimentos", "Tarefa": "Testar solicitações diversas para o estoque", "Predecessora": "51", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "53", "Fase": "Simulação", "Macro Processo": "Faturamento", "Responsabilidade": "Cliente", "Responsável": "Faturamento", "Tarefa": "Testar fechamento de contas de faturamento", "Predecessora": "52", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "54", "Fase": "Simulação", "Macro Processo": "Controladoria", "Responsabilidade": "Cliente", "Responsável": "Controladoria", "Tarefa": "Testar recebimento, estorno e cancelamento no caixa", "Predecessora": "53", "Duração Prevista": 5, "Status": "Pendente"},
-    {"ID": "55", "Fase": "Simulação", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Fazer backup do banco e guardar configurações testadas", "Predecessora": "54", "Duração Prevista": 1, "Status": "Pendente"},
-    {"ID": "56", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "TI", "Tarefa": "Abrir Centex para ST avaliar ambiente", "Predecessora": "55", "Duração Prevista": 0, "Status": "Pendente"},
-    {"ID": "57", "Fase": "Pós Go Live", "Macro Processo": "Faturamento", "Responsabilidade": "MV", "Responsável": "Faturamento", "Tarefa": "Monitorar com o setor o relatório de consumo", "Predecessora": "56", "Duração Prevista": 1, "Status": "Pendente"},
-    {"ID": "58", "Fase": "Pré Go Live", "Macro Processo": "Suprimentos", "Responsabilidade": "Cliente", "Responsável": "Suprimentos", "Tarefa": "Acompanhar volume de devolução via MV", "Predecessora": "57", "Duração Prevista": 2, "Status": "Pendente"},
-    {"ID": "59", "Fase": "Pós Go Live", "Macro Processo": "Assistencial", "Responsabilidade": "Cliente", "Responsável": "Assistencial", "Tarefa": "Monitorar prescrições manuais e reportar à direção", "Predecessora": "58", "Duração Prevista": 7, "Status": "Pendente"},
-    {"ID": "60", "Fase": "Simulação", "Macro Processo": "Assistencial", "Responsabilidade": "Cliente", "Responsável": "Assistencial", "Tarefa": "Acompanhar confirmação cirúrgica", "Predecessora": "59", "Duração Prevista": 5, "Status": "Pendente"}
-])
+    def add_watermark(self):
+        self.set_font("Helvetica", 'B', 50); self.set_text_color(248, 248, 248)
+        with self.rotation(45, 105, 148):
+            self.text(40, 160, "C O N F I D E N C I A L")
 
-df_base = load_data()
+    def desenhar_sparkline_pdf(self, perc_fases, y_pos):
+        x_start, largura_total = 25, 160
+        passo = largura_total / (len(perc_fases) - 1)
+        self.set_draw_color(200, 200, 200); self.set_line_width(0.8)
+        self.line(x_start, y_pos + 5, x_start + largura_total, y_pos + 5)
+        
+        for i, (fase, valor) in enumerate(perc_fases.items()):
+            x_circ = x_start + (i * passo)
+            if valor >= 100:
+                self.set_fill_color(20, 50, 100); self.set_draw_color(20, 50, 100)
+            elif valor > 0:
+                self.set_fill_color(20, 50, 100); self.set_draw_color(255, 179, 14); self.set_line_width(0.8)
+            else:
+                self.set_fill_color(230, 230, 230); self.set_draw_color(200, 200, 200)
+                
+            self.ellipse(x_circ - 3, y_pos + 2, 6, 6, 'FD')
+            self.set_font("Helvetica", 'B', 6); self.set_text_color(20, 50, 100)
+            self.text(x_circ - 8, y_pos + 12, fase[:15])
 
-# --- SIDEBAR: CONTROLE ---
+# --- INTERFACE STREAMLIT ---
+st.set_page_config(page_title="Executive Hub", layout="wide")
+st.title("🏛️ Hub de Inteligência | Governança e Metodologia")
+
+# Busca de Projeto no Hub
 with st.sidebar:
-    st.header("⚙️ Configurações")
-    proj_nome = st.text_input("Nome do Projeto", "Projeto Cutover Hospitalar")
-    gp_nome = st.text_input("GP Responsável", "Seu Nome")
-    data_base = st.date_input("Início do Cronograma", datetime.now())
-    tolerancia = st.number_input("Tolerância (Dias)", min_value=0, value=2)
+    st.header("🔍 Buscar no Hub")
+    projetos_salvos = [p.nome_projeto for p in session.query(Projeto.nome_projeto).distinct().all()]
+    projeto_busca = st.selectbox("Carregar Projeto Existente", [""] + projetos_salvos)
+
+# --- CAMPOS EXECUTIVOS ---
+with st.container():
+    c1, c2, c3 = st.columns(3)
+    nome_p = c1.text_input("Nome do Projeto", value=projeto_busca if projeto_busca else "")
+    oportunidade = c2.text_input("Oportunidade (CRM)")
+    gp_p = c3.text_input("Gerente de Projeto")
+
+    c4, c5, c6 = st.columns(3)
+    horas_cont = c4.number_input("Horas Contratadas", min_value=0.0, step=10.0 )
+    tipo_p = c5.selectbox("Tipo", ["Implantação", "Revitalização", "Upgrade", "Consultoria"])
+    resp_verificacao = c6.text_input("Responsável pela Verificação")
+
+    c7, c8, c9 = st.columns(3)
+    d_inicio = c7.date_input("Data de Início", format="DD/MM/YYYY")
+    d_termino = c8.date_input("Data de Término", format="DD/MM/YYYY")
+    d_producao = c9.date_input("Entrada em Produção", format="DD/MM/YYYY")
+
+st.write("### 📋 Checklist Metodológico")
+tabs = st.tabs(list(METODOLOGIA.keys()))
+perc_fases, detalhes_entrega = {}, {}
+
+for i, (fase, itens) in enumerate(METODOLOGIA.items()):
+    with tabs[i]:
+        concluidos = 0
+        detalhes_entrega[fase] = []
+        cols_check = st.columns(2)
+        for idx, item in enumerate(itens):
+            checked = cols_check[idx % 2].checkbox(item, key=f"chk_{fase}_{item}")
+            detalhes_entrega[fase].append({"doc": item, "status": "Concluído" if checked else "Pendente"})
+            if checked: concluidos += 1
+        perc_fases[fase] = (concluidos / len(itens)) * 100
+
+# --- ESCALA DE PROGRESSÃO ---
+st.markdown("---")
+global_avg = sum(perc_fases.values()) / len(perc_fases)
+st.write(f"### 🛤️ Evolução da Implantação: {global_avg:.1f}%")
+
+cols_spark = st.columns(len(perc_fases))
+for i, (fase, valor) in enumerate(perc_fases.items()):
+    with cols_spark[i]:
+        cor_circulo = "#143264" if valor > 0 else "#eeeeee"
+        estilo_borda = "border: 3px solid #143264;" if valor >= 100 else ("border: 3px solid #ffb30e;" if valor > 0 else "border: 1px solid #cccccc;")
+        st.markdown(f"""<div style='text-align: center;'><div style='display: inline-block; width: 25px; height: 25px; border-radius: 50%; background: {cor_circulo}; {estilo_borda}'></div><p style='font-size: 11px; font-weight: bold; color: #143264; margin-top: 5px;'>{fase}</p></div>""", unsafe_allow_html=True)
+
+st.progress(global_avg / 100)
+
+# --- HUB DE AÇÕES ---
+st.markdown("---")
+col_graf, col_btn = st.columns([1.5, 1])
+
+with col_graf:
+    fig = gerar_radar_chart(perc_fases)
+    st.pyplot(fig)
+    img_buf = io.BytesIO()
+    fig.savefig(img_buf, format='png', bbox_inches='tight')
+    img_buf.seek(0)
+
+with col_btn:
+    st.subheader("⚙️ Hub de Governança")
     
-    st.divider()
-    st.header("💾 Nuvem")
-    if st.button("Sincronizar com Google Sheets"):
-        # Envia os dados atuais para a planilha
-        conn.update(data=df_base)
-        st.success("Dados salvos no Drive!")
+    if st.button("💾 SALVAR NO HUB DE INTELIGÊNCIA", use_container_width=True):
+        if nome_p:
+            try:
+                novo_projeto = Projeto(
+                    nome_projeto=nome_p, gerente_projeto=gp_p, oportunidade=oportunidade,
+                    horas_contratadas=horas_cont, tipo=tipo_p, responsavel_verificacao=resp_verificacao,
+                    data_inicio=d_inicio.strftime("%d/%m/%Y"), 
+                    data_termino=d_termino.strftime("%d/%m/%Y"), 
+                    data_producao=d_producao.strftime("%d/%m/%Y"),
+                    **{MAPA_COLUNAS[f]: v for f, v in perc_fases.items()}
+                )
+                session.add(novo_projeto)
+                session.commit()
+                st.success(f"✅ Snapshot de '{nome_p}' salvo com sucesso!")
+                st.rerun()
+            except Exception as e:
+                session.rollback()
+                st.error(f"Erro ao salvar: {e}")
+        else:
+            st.warning("Nome do Projeto é obrigatório.")
 
-    st.header("🔍 Filtros")
-    f_status = st.multiselect("Status", df_base['Status'].unique(), default=df_base['Status'].unique())
-
-# --- PROCESSAMENTO ---
-dt_start = datetime.combine(data_base, datetime.min.time())
-df_full = calculate_schedule(df_base, dt_start, tolerancia)
-
-# Filtro
-df_filtered = df_full[df_full['Status'].isin(f_status)]
-
-# --- DASHBOARD ---
-st.title(f"🚀 Painel de Cutover: {proj_nome}")
-
-if not df_filtered.empty:
-    # Gantt Chart
-    fig = px.timeline(
-        df_filtered, 
-        x_start="Data Início", 
-        x_end="Data Fim", 
-        y="Tarefa", 
-        color="Status",
-        hover_data=["Responsável", "Data Limite"],
-        color_discrete_map={"Concluído": "#2E7D32", "Em andamento": "#F9A825", "Pendente": "#C62828"}
-    )
-    fig.update_yaxes(autorange="reversed")
-    fig.update_xaxes(tickformat="%d/%m/%Y")
-    fig.update_layout(height=600)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Editor de Dados (CRUD manual)
-    st.subheader("📑 Gerenciar Plano de Ação")
-    st.info("Clique nas células abaixo para editar o Status ou Duração. Depois, salve no menu lateral.")
-    
-    # Substituição do dataframe por data_editor para permitir salvamento
-    edited_df = st.data_editor(
-        df_base, 
-        use_container_width=True, 
-        hide_index=True,
-        num_rows="dynamic" # Permite adicionar novas tarefas no final
-    )
-    
-    # Atualiza a base global se houver mudanças
-    if not edited_df.equals(df_base):
-        df_base = edited_df
-
-    # Exportação Excel
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df_full.to_excel(writer, index=False)
-    
-    st.download_button(
-        label="📥 Baixar Cronograma (Excel)",
-        data=buffer.getvalue(),
-        file_name=f"Cutover_{proj_nome}.xlsx",
-        mime="application/vnd.ms-excel"
-    )
-else:
-    st.warning("Nenhum dado com os filtros aplicados.")
-
-st.caption(f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')} | GP: {gp_nome}")
-
-
-
-
+    if st.button("📄 GERAR RELATÓRIO EXECUTIVO (IA)", use_container_width=True, type="primary"):
+        pdf = PDFExecutivo()
+        pdf.add_page(); pdf.add_watermark()
+        
+        # Grid Executiva dd/mm/aaaa
+        pdf.set_font("Helvetica", 'B', 8); pdf.set_text_color(20, 50, 100); pdf.set_fill_color(245, 245, 245)
+        pdf.cell(63, 7, f" PROJETO: {nome_p.upper()}", 1, 0, 'L', True)
+        pdf.cell(63, 7, f" OPORTUNIDADE: {oportunidade}", 1, 0, 'L', True)
+        pdf.cell(64, 7, f" GP: {gp_p}", 1, 1, 'L', True)
+        pdf.cell(63, 7, f" INICIO: {d_inicio.strftime('%d/%m/%Y')}", 1, 0, 'L')
+        pdf.cell(63, 7, f" TERMINO: {d_termino.strftime('%d/%m/%Y')}", 1, 0, 'L')
+        pdf.cell(64, 7, f" PRODUCAO: {d_producao.strftime('%d/%m/%Y')}", 1, 1, 'L')
+        
+        pdf.ln(5); pdf.desenhar_sparkline_pdf(perc_fases, pdf.get_y()); pdf.set_y(pdf.get_y() + 20)
+        pdf.image(img_buf, x=65, w=80); pdf.ln(80)
+        
+        # Detalhamento IA
+        pdf.set_fill_color(255, 243, 205); pdf.set_font("Helvetica", 'B', 10)
+        pdf.cell(190, 8, " INTELIGENCIA DE ENTREGA: DIAGNOSTICO DE PENDENCIAS", 0, 1, 'L', True)
+        pdf.set_font("Helvetica", '', 8); pdf.set_text_color(50, 50, 50)
+        
+        for fase, itens in detalhes_entrega.items():
+            pend = [i["doc"] for i in itens if i["status"] == "Pendente"]
+            if pend:
+                pdf.set_font("Helvetica", 'B', 8); pdf.cell(190, 5, f"> Fase {fase}:", ln=True)
+                pdf.set_font("Helvetica", '', 8); pdf.multi_cell(190, 4, f" Pendencias Criticas: {', '.join(pend[:5])}...")
+                pdf.ln(1)
+        
+        st.download_button("📥 BAIXAR RELATORIO PDF", data=bytes(pdf.output()), file_name=f"Executive_Report_{nome_p}.pdf", mime="application/pdf", use_container_width=True)
 
 
