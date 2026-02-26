@@ -5,3 +5,4 @@ networkx
 graphviz
 xlsxwriter
 GSheetsConnection
+streamlit_gsheets
