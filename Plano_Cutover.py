@@ -110,7 +110,7 @@ tasks_data = [
 # --- SIDEBAR: CONFIGURAÇÕES E FILTROS ---
 with st.sidebar:
     st.header("⚙️ Painel de Controle")
-    proj_nome = st.text_input("Nome do Projeto", "Informe qual é o projeto")
+    proj_nome = st.text_input("Nome do Projeto", "Informe o nome do projeto")
     gp_nome = st.text_input("Gerente de Projetos", "Digite seu Nome")
     data_base = st.date_input("Início do Cronograma", datetime.now(), format="DD/MM/YYYY")
     tolerancia = st.number_input("Tolerância de Desvio (Dias)", min_value=0, value=3)
@@ -175,5 +175,6 @@ else:
     st.warning("Nenhum dado encontrado para os filtros aplicados.")
 
 st.caption(f"GP Responsável: {gp_nome} | Tolerância aplicada: {tolerancia} dias.")
+
 
 
