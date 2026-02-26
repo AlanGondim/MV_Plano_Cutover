@@ -113,7 +113,7 @@ with st.sidebar:
     proj_nome = st.text_input("Nome do Projeto", "Informe o nome do projeto")
     gp_nome = st.text_input("Gerente de Projetos", "Digite seu Nome")
     data_base = st.date_input("Início do Cronograma", datetime.now(), format="DD/MM/YYYY")
-    tolerancia = st.number_input("Tolerância de Desvio (Dias)", min_value=0, value=3)
+    tolerancia = st.number_input("Tolerância de Desvio (Dias)", min_value=0, value=0)
     
     st.divider()
     st.header("🔍 Filtros de Exibição")
@@ -175,6 +175,7 @@ else:
     st.warning("Nenhum dado encontrado para os filtros aplicados.")
 
 st.caption(f"GP Responsável: {gp_nome} | Tolerância aplicada: {tolerancia} dias.")
+
 
 
 
