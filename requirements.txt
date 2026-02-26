@@ -4,5 +4,4 @@ plotly
 networkx
 graphviz
 xlsxwriter
-
-
+GSheetsConnection
