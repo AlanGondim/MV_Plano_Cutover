@@ -3,16 +3,19 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import io
-from stramlit_gsheets import GSheetsConnection
+# CORREÇÃO: Nome correto da biblioteca
+from streamlit_gsheets import GSheetsConnection
 
 # Configuração da página
-st.set_page_config(page_title="Painel Cutover Hospitalar MV", layout="wide")
+st.set_page_config(page_title="Painel Cutover Hospitalar MV", layout="wide", page_icon="🚀")
 
 # CONEXÃO GOOGLE SHEETS 
+# Certifique-se de ter configurado as secrets no Streamlit Cloud ou .streamlit/secrets.toml
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def calculate_schedule(df, project_start_date, tolerance_days):
     df = df.copy()
+    # Garantir que os tipos de dados estão corretos para cálculos
     df['Duração Prevista'] = pd.to_numeric(df['Duração Prevista'], errors='coerce').fillna(0)
     df['ID'] = df['ID'].astype(str).str.strip()
     df['Predecessora'] = df['Predecessora'].astype(str).str.strip()
@@ -22,7 +25,8 @@ def calculate_schedule(df, project_start_date, tolerance_days):
     df['Data Limite'] = pd.NaT
     
     end_dates = {}
-    # Ordenar por ID para garantir que as predecessoras sejam calculadas antes das dependentes
+    
+    # Ordenar por ID para garantir a integridade das predecessoras
     df['ID_Int'] = pd.to_numeric(df['ID'], errors='coerce')
     df = df.sort_values('ID_Int').drop(columns=['ID_Int'])
 
@@ -31,8 +35,8 @@ def calculate_schedule(df, project_start_date, tolerance_days):
         pred_id = row['Predecessora']
         duration = int(row['Duração Prevista'])
         
-        # Lógica de início: se for a primeira tarefa ou a predecessora não existir/for 0
-        if pred_id in ['0', '', 'None'] or pred_id not in end_dates:
+        # Lógica de início: primeira tarefa ou predecessora inexistente
+        if pred_id in ['0', '', 'None', 'nan'] or pred_id not in end_dates:
             current_start = project_start_date
         else:
             current_start = end_dates[pred_id]
@@ -47,8 +51,15 @@ def calculate_schedule(df, project_start_date, tolerance_days):
         
     return df
 
-# Base de Dados completa conforme Plano de Cutover Hospitalar 
-tasks_data = [
+# --- CARREGAMENTO DE DADOS (GSHEETS + FALLBACK) ---
+@st.cache_data(ttl=60)  # Cache de 1 minuto para performance
+def load_data():
+    try:
+        # Tenta ler da planilha configurada
+        return conn.read(ttl="0")
+    except Exception:
+        # Se falhar, usa seus dados originais do código
+        return pd.DataFrame([
     {"ID": "1", "Fase": "Planejamento", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "Consultoria", "Tarefa": "Verificar todas as verticais envolvidas no projeto", "Predecessora": "0", "Duração Prevista": 0, "Status": "Concluído"},
     {"ID": "2", "Fase": "Planejamento", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "MV", "Responsável": "TI", "Tarefa": "Verificar se o cliente possui triggers, procedures e functions próprias", "Predecessora": "1", "Duração Prevista": 2, "Status": "Concluído"},
     {"ID": "3", "Fase": "Pré Go Live", "Macro Processo": "Tecnologia da Informação", "Responsabilidade": "Cliente", "Responsável": "TI", "Tarefa": "Atualizar a versão do sistema", "Predecessora": "2", "Duração Prevista": 2, "Status": "Em andamento"},
@@ -109,76 +120,86 @@ tasks_data = [
     {"ID": "58", "Fase": "Pré Go Live", "Macro Processo": "Suprimentos", "Responsabilidade": "Cliente", "Responsável": "Suprimentos", "Tarefa": "Acompanhar volume de devolução via MV", "Predecessora": "57", "Duração Prevista": 2, "Status": "Pendente"},
     {"ID": "59", "Fase": "Pós Go Live", "Macro Processo": "Assistencial", "Responsabilidade": "Cliente", "Responsável": "Assistencial", "Tarefa": "Monitorar prescrições manuais e reportar à direção", "Predecessora": "58", "Duração Prevista": 7, "Status": "Pendente"},
     {"ID": "60", "Fase": "Simulação", "Macro Processo": "Assistencial", "Responsabilidade": "Cliente", "Responsável": "Assistencial", "Tarefa": "Acompanhar confirmação cirúrgica", "Predecessora": "59", "Duração Prevista": 5, "Status": "Pendente"}
-]
+])
 
-# --- SIDEBAR: CONFIGURAÇÕES E FILTROS ---
+df_base = load_data()
+
+# --- SIDEBAR: CONTROLE ---
 with st.sidebar:
-    st.header("⚙️ Painel de Controle")
-    proj_nome = st.text_input("Nome do Projeto", "Informe o nome do projeto")
-    gp_nome = st.text_input("Gerente de Projetos", "Digite seu Nome")
-    data_base = st.date_input("Início do Cronograma", datetime.now(), format="DD/MM/YYYY")
-    tolerancia = st.number_input("Tolerância de Desvio (Dias)", min_value=0, value=0)
+    st.header("⚙️ Configurações")
+    proj_nome = st.text_input("Nome do Projeto", "Projeto Cutover Hospitalar")
+    gp_nome = st.text_input("GP Responsável", "Seu Nome")
+    data_base = st.date_input("Início do Cronograma", datetime.now())
+    tolerancia = st.number_input("Tolerância (Dias)", min_value=0, value=2)
     
     st.divider()
-    st.header("🔍 Filtros de Exibição")
-    df_raw = pd.DataFrame(tasks_data)
-    f_resp = st.multiselect("Responsabilidade", df_raw['Responsabilidade'].unique(), default=df_raw['Responsabilidade'].unique())
-    f_macro = st.multiselect("Macro Processo", df_raw['Macro Processo'].unique(), default=df_raw['Macro Processo'].unique())
-    f_status = st.multiselect("Status da Tarefa", df_raw['Status'].unique(), default=df_raw['Status'].unique())
+    st.header("💾 Nuvem")
+    if st.button("Sincronizar com Google Sheets"):
+        # Envia os dados atuais para a planilha
+        conn.update(data=df_base)
+        st.success("Dados salvos no Drive!")
+
+    st.header("🔍 Filtros")
+    f_status = st.multiselect("Status", df_base['Status'].unique(), default=df_base['Status'].unique())
 
 # --- PROCESSAMENTO ---
 dt_start = datetime.combine(data_base, datetime.min.time())
-df_full = calculate_schedule(df_raw, dt_start, tolerancia)
+df_full = calculate_schedule(df_base, dt_start, tolerancia)
 
-# Aplicação dos Filtros
-df_filtered = df_full[
-    (df_full['Responsabilidade'].isin(f_resp)) & 
-    (df_full['Macro Processo'].isin(f_macro)) &
-    (df_full['Status'].isin(f_status))
-]
+# Filtro
+df_filtered = df_full[df_full['Status'].isin(f_status)]
 
-# --- DASHBOARD VISUAL ---
-st.title(f"🚀 Dashboard Cutover: {proj_nome}")
+# --- DASHBOARD ---
+st.title(f"🚀 Painel de Cutover: {proj_nome}")
 
 if not df_filtered.empty:
-    # Gráfico de Gantt por Status
+    # Gantt Chart
     fig = px.timeline(
         df_filtered, 
         x_start="Data Início", 
         x_end="Data Fim", 
         y="Tarefa", 
         color="Status",
-        hover_data=["ID", "Responsável", "Data Limite"],
+        hover_data=["Responsável", "Data Limite"],
         color_discrete_map={"Concluído": "#2E7D32", "Em andamento": "#F9A825", "Pendente": "#C62828"}
     )
     fig.update_yaxes(autorange="reversed")
     fig.update_xaxes(tickformat="%d/%m/%Y")
-    fig.update_layout(height=800, xaxis_title="Linha do Tempo (Padrão dd/mm/aaaa)")
+    fig.update_layout(height=600)
     st.plotly_chart(fig, use_container_width=True)
 
-    # Tabela de Dados
-    st.subheader("📑 Detalhamento do Plano de Cutover")
-    df_disp = df_filtered.copy()
-    for col in ['Data Início', 'Data Fim', 'Data Limite']:
-        df_disp[col] = df_disp[col].dt.strftime('%d/%m/%Y')
+    # Editor de Dados (CRUD manual)
+    st.subheader("📑 Gerenciar Plano de Ação")
+    st.info("Clique nas células abaixo para editar o Status ou Duração. Depois, salve no menu lateral.")
     
-    st.dataframe(df_disp, use_container_width=True, hide_index=True)
+    # Substituição do dataframe por data_editor para permitir salvamento
+    edited_df = st.data_editor(
+        df_base, 
+        use_container_width=True, 
+        hide_index=True,
+        num_rows="dynamic" # Permite adicionar novas tarefas no final
+    )
+    
+    # Atualiza a base global se houver mudanças
+    if not edited_df.equals(df_base):
+        df_base = edited_df
 
-    # Botão de Exportação Excel
+    # Exportação Excel
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df_disp.to_excel(writer, index=False, sheet_name='Plano_Cutover')
+        df_full.to_excel(writer, index=False)
     
     st.download_button(
-        label="📥 Exportar Cronograma para Excel",
+        label="📥 Baixar Cronograma (Excel)",
         data=buffer.getvalue(),
         file_name=f"Cutover_{proj_nome}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.ms-excel"
     )
 else:
-    st.warning("Nenhum dado encontrado para os filtros aplicados.")
+    st.warning("Nenhum dado com os filtros aplicados.")
 
-st.caption(f"GP Responsável: {gp_nome} | Tolerância aplicada: {tolerancia} dias.")
+st.caption(f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')} | GP: {gp_nome}")
+
 
 
 
