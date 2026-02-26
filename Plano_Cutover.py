@@ -3,9 +3,13 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import io
+from stramlit_gsheets import GSheetsConnection
 
 # Configuração da página
 st.set_page_config(page_title="Painel Cutover Hospitalar MV", layout="wide")
+
+# CONEXÃO GOOGLE SHEETS 
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 def calculate_schedule(df, project_start_date, tolerance_days):
     df = df.copy()
@@ -153,7 +157,7 @@ if not df_filtered.empty:
     st.plotly_chart(fig, use_container_width=True)
 
     # Tabela de Dados
-    st.subheader("📑 Detalhamento do Plano de Ação")
+    st.subheader("📑 Detalhamento do Plano de Cutover")
     df_disp = df_filtered.copy()
     for col in ['Data Início', 'Data Fim', 'Data Limite']:
         df_disp[col] = df_disp[col].dt.strftime('%d/%m/%Y')
@@ -166,7 +170,7 @@ if not df_filtered.empty:
         df_disp.to_excel(writer, index=False, sheet_name='Plano_Cutover')
     
     st.download_button(
-        label="📥 Exportar Cronograma Filtrado (Excel)",
+        label="📥 Exportar Cronograma para Excel",
         data=buffer.getvalue(),
         file_name=f"Cutover_{proj_nome}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -175,6 +179,7 @@ else:
     st.warning("Nenhum dado encontrado para os filtros aplicados.")
 
 st.caption(f"GP Responsável: {gp_nome} | Tolerância aplicada: {tolerancia} dias.")
+
 
 
 
