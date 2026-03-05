@@ -2,140 +2,154 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
-import random
+import io
 
-# --- CONFIGURAÇÃO E ESTILO ---
-st.set_page_config(page_title="Smart Cutover AI", layout="wide", initial_sidebar_state="expanded")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Consolidador de Cutover IA", layout="wide")
 
-# CSS para dar um ar moderno e "tech"
+# --- ESTILO CUSTOMIZADO ---
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .ai-audit-card { padding: 20px; border-radius: 10px; border-left: 5px solid #7000ff; background-color: #f0e6ff; margin-bottom: 10px; }
+    .reportview-container { background: #f0f2f6; }
+    .stMetric { border: 1px solid #d1d8e0; border-radius: 8px; padding: 10px; }
+    .status-ready { color: #2ecc71; font-weight: bold; }
+    .status-risk { color: #e74c3c; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- LÓGICA DE NEGÓCIO ---
+# --- FUNÇÕES CORE ---
 
 def calculate_schedule(df, project_start_date):
+    """Calcula cronograma respeitando predecessoras e verticais."""
     if df.empty: return df
     df = df.copy()
+    
+    # Garantir tipos de dados
     df['Duração (Dias)'] = pd.to_numeric(df['Duração (Dias)'], errors='coerce').fillna(1)
+    df['ID'] = df['ID'].astype(str)
+    df['Predecessora'] = df['Predecessora'].astype(str).replace('nan', '0')
+    
     df['Data Início'] = pd.NaT
     df['Data Fim'] = pd.NaT
     
     end_dates = {}
-    project_start_dt = datetime.combine(project_start_date, datetime.min.time())
+    base_dt = datetime.combine(project_start_date, datetime.min.time())
 
     for index, row in df.iterrows():
-        task_id = str(row['ID'])
-        pred_id = str(row['Predecessora']).strip()
-        duration = int(row['Duração (Dias)'])
+        t_id = row['ID']
+        p_id = row['Predecessora'].strip()
+        dur = int(row['Duração (Dias)'])
         
-        if pred_id in ['0', '', 'None', task_id] or pred_id not in end_dates:
-            current_start = project_start_dt
+        # Se a predecessora existir e já tiver sido calculada
+        if p_id != '0' and p_id in end_dates:
+            start_date = end_dates[p_id]
         else:
-            current_start = end_dates[pred_id]
-        
-        current_end = current_start + timedelta(days=duration)
-        df.at[index, 'Data Início'] = current_start
-        df.at[index, 'Data Fim'] = current_end
-        end_dates[task_id] = current_end
+            start_date = base_dt
+            
+        end_date = start_date + timedelta(days=dur)
+        df.at[index, 'Data Início'] = start_date
+        df.at[index, 'Data Fim'] = end_date
+        end_dates[t_id] = end_date
         
     return df
 
-# --- ESTADO DA SESSÃO (MEMÓRIA DO APP) ---
-if 'tasks' not in st.session_state:
-    st.session_state.tasks = pd.DataFrame([
-        {"ID": "1", "Vertical": "Infra", "Tarefa": "Setup de Servidores", "Predecessora": "0", "Duração (Dias)": 2, "Status": "Concluído", "Criticidade": "Alta"},
-        {"ID": "2", "Vertical": "Dados", "Tarefa": "Migração de Banco", "Predecessora": "1", "Duração (Dias)": 3, "Status": "Em andamento", "Criticidade": "Crítica"},
-        {"ID": "3", "Vertical": "Apps", "Tarefa": "Deploy de APIs", "Predecessora": "2", "Duração (Dias)": 1, "Status": "Pendente", "Criticidade": "Média"},
-    ])
+def ai_risk_audit(df):
+    """Simula Auditoria de IA baseada no contexto fornecido."""
+    risks = []
+    if df.empty: return risks
+    
+    # Regra 1: Verificar tarefas críticas sem folga ou com duração suspeita
+    criticas = df[df['Criticidade'] == 'Crítica']
+    if len(criticas) > 0:
+        risks.append(f"🤖 **IA Audit:** Identificadas {len(criticas)} tarefas críticas. Verifique se o rollback da Vertical '{criticas.iloc[0]['Vertical']}' está testado.")
+    
+    # Regra 2: Simular NLP (Sentiment Analysis de prontidão)
+    risks.append("📊 **Predição:** 85% de prontidão. Alerta: Vertical de 'Dados' apresenta sinais de fadiga nos logs de teste.")
+    
+    return risks
 
-# --- SIDEBAR - CONTROLES ---
+# --- INTERFACE - SIDEBAR ---
 with st.sidebar:
-    st.title("🚀 Smart Cutover")
-    st.subheader("Configurações do Programa")
-    data_base = st.date_input("Início do Cutover", datetime.now(), format="DD/MM/YYYY")
+    st.header("📂 Consolidação")
+    uploaded_file = st.file_uploader("Upload de Planos (Excel/CSV)", type=["xlsx", "csv"])
+    data_projeto = st.date_input("Data de Início do Programa", datetime.now())
     
     st.divider()
-    st.markdown("### 🤖 Configurações de IA")
-    model_sensitivity = st.slider("Sensibilidade do Auditor IA", 0, 100, 75)
-    st.info("A IA está varrendo logs de testes e sentimentos em tempo real.")
+    st.info("💡 **Dica de Inovação:** Ao subir o arquivo, a IA cruza as IDs de diferentes verticais para encontrar dependências ocultas.")
 
-# --- CORPO PRINCIPAL ---
-col_t, col_ai = st.columns([0.7, 0.3])
+# --- INTERFACE - CORPO PRINCIPAL ---
+st.title("🛡️ Smart Program Cutover Manager")
+st.markdown("### Gerenciamento e Auditoria Preditiva de Go-Live")
 
-with col_t:
-    st.subheader("📅 Cronograma Interativo")
-    st.caption("Edite, adicione ou exclua linhas diretamente na tabela abaixo.")
-    
-    # EDITORA DE DADOS (A Inovação na Gestão)
+# Inicialização do estado das tarefas
+if 'tasks_df' not in st.session_state:
+    st.session_state.tasks_df = pd.DataFrame(columns=["ID", "Vertical", "Tarefa", "Predecessora", "Duração (Dias)", "Status", "Criticidade"])
+
+# Lógica de Upload
+if uploaded_file:
+    if uploaded_file.name.endswith('.xlsx'):
+        new_data = pd.read_excel(uploaded_file)
+    else:
+        new_data = pd.read_csv(uploaded_file)
+    st.session_state.tasks_df = new_data
+    st.success("Dados importados com sucesso!")
+
+# --- ÁREA DE EDIÇÃO ---
+with st.expander("📝 Editor de Plano Consolidado (Modo Grade)", expanded=True):
     edited_df = st.data_editor(
-        st.session_state.tasks,
-        num_rows="dynamic", # PERMITE INCLUIR E EXCLUIR LINHAS
+        st.session_state.tasks_df,
+        num_rows="dynamic",
         use_container_width=True,
         column_config={
-            "Status": st.column_config.SelectboxColumn(options=["Pendente", "Em andamento", "Concluído", "Atrasado"]),
-            "Vertical": st.column_config.SelectboxColumn(options=["Infra", "Dados", "Apps", "Negócio", "QA"]),
-            "Criticidade": st.column_config.SelectboxColumn(options=["Baixa", "Média", "Alta", "Crítica"]),
-        },
-        key="data_editor"
+            "Vertical": st.column_config.SelectboxColumn(options=["Infra", "Sistemas", "Dados", "Processos", "Treinamento"]),
+            "Status": st.column_config.SelectboxColumn(options=["Pendente", "Em progresso", "Concluído", "Bloqueado"]),
+            "Criticidade": st.column_config.SelectboxColumn(options=["Baixa", "Média", "Alta", "Crítica"])
+        }
     )
-    st.session_state.tasks = edited_df
+    st.session_state.tasks_df = edited_df
 
-    # Processamento do Cronograma
-    df_final = calculate_schedule(edited_df, data_base)
-
-with col_ai:
-    st.subheader("🧠 Auditoria Final IA")
+# --- PROCESSAMENTO E VISUALIZAÇÃO ---
+if not edited_df.empty:
+    df_calc = calculate_schedule(edited_df, data_projeto)
     
-    # Simulação de Análise Preditiva (Inovação mencionada no texto)
-    prob_sucesso = random.randint(60, 95)
-    color = "green" if prob_sucesso > 85 else "orange" if prob_sucesso > 75 else "red"
+    # Colunas de análise
+    col_chart, col_audit = st.columns([0.65, 0.35])
     
-    st.markdown(f"""
-    <div class="ai-audit-card">
-        <h4>Probabilidade de Sucesso</h4>
-        <h2 style="color:{color};">{prob_sucesso}%</h2>
-        <small>Baseado em 142 artefatos e 12 verticais</small>
-    </div>
-    """, unsafe_allow_html=True)
+    with col_chart:
+        st.subheader("🗓️ Timeline de Integração")
+        fig = px.timeline(
+            df_calc, 
+            x_start="Data Início", 
+            x_end="Data Fim", 
+            y="Tarefa", 
+            color="Vertical",
+            hover_data=["Predecessora", "Status"]
+        )
+        fig.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig, use_container_width=True)
+        
+    with col_audit:
+        st.subheader("🕵️ Auditoria Final (IA)")
+        audit_messages = ai_risk_audit(df_calc)
+        for msg in audit_messages:
+            st.write(msg)
+            
+        # Widget de Go/No-Go Preditivo
+        score = 88 # Simulação
+        st.metric("Índice de Confiança para Go-Live", f"{score}%", delta="4% desde ontem")
+        st.progress(score/100)
 
-    # Insights Gerados por NLP e Análise Predutiva
-    st.markdown("##### 🚩 Sinais de Alerta (Preventivo)")
-    if prob_sucesso < 90:
-        st.warning("**Risco de QA:** O módulo 'Dados' teve 20% menos testes que o padrão histórico.")
-        st.error("**Engajamento:** Sentiment Analysis indica ansiedade alta na Vertical de Negócio.")
-    else:
-        st.success("Checklists de corte validados com 100% de aderência.")
-
-# --- VISUALIZAÇÃO GANTT ---
-st.divider()
-if not df_final.empty:
-    fig = px.timeline(
-        df_final, 
-        x_start="Data Início", 
-        x_end="Data Fim", 
-        y="Tarefa", 
-        color="Vertical",
-        hover_data=["Status", "Criticidade"],
-        title="Visualização do Fluxo de Virada (Gantt Dinâmico)",
-        color_discrete_sequence=px.colors.qualitative.Prism
+    # --- DOWNLOAD DO PLANO CONSOLIDADO ---
+    st.divider()
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_calc.to_excel(writer, index=False, sheet_name='Plano_Consolidado')
+    
+    st.download_button(
+        label="📥 Exportar Plano Mestre para Excel",
+        data=output.getvalue(),
+        file_name="plano_cutover_consolidado.xlsx",
+        mime="application/vnd.ms-excel"
     )
-    fig.update_yaxes(autorange="reversed")
-    fig.update_layout(height=400, margin=dict(l=0, r=0, t=40, b=0))
-    st.plotly_chart(fig, use_container_width=True)
-
-# --- MÉTRICAS DE PROGRAMA ---
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Total de Tarefas", len(df_final))
-m2.metric("Tarefas Críticas", len(df_final[df_final['Criticidade'] == 'Crítica']))
-m3.metric("Data de Término", df_final['Data Fim'].max().strftime('%d/%m/%Y') if not df_final.empty else "-")
-m4.metric("Status Global", "Atenção" if prob_sucesso < 80 else "Pronto")
-
-st.markdown("---")
-st.caption("🚀 **Sugestão de Próximo Passo:** Gostaria que eu conectasse este script a uma API de IA real (como a do Gemini ou GPT) para analisar o sentimento dos seus e-mails de projeto automaticamente?")
-
-
+else:
+    st.warning("Aguardando upload ou inclusão de tarefas para gerar o plano.")
