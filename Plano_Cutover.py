@@ -57,7 +57,7 @@ if 'tasks' not in st.session_state:
 with st.sidebar:
     st.title("🚀 Smart Cutover")
     st.subheader("Configurações do Programa")
-    data_base = st.date_input("Início do Cutover", datetime.now())
+    data_base = st.date_input("Início do Cutover", datetime.now(), format="DD/MM/YYYY")
     
     st.divider()
     st.markdown("### 🤖 Configurações de IA")
@@ -137,3 +137,4 @@ m4.metric("Status Global", "Atenção" if prob_sucesso < 80 else "Pronto")
 
 st.markdown("---")
 st.caption("🚀 **Sugestão de Próximo Passo:** Gostaria que eu conectasse este script a uma API de IA real (como a do Gemini ou GPT) para analisar o sentimento dos seus e-mails de projeto automaticamente?")
+
